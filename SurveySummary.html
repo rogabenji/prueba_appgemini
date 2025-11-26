@@ -1,0 +1,1895 @@
+<html>
+
+<head>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <title></title>
+
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, sans-serif;
+    }
+
+    b {
+      font-weight: 600
+    }
+
+     :focus {
+      background-color: rgba(0, 161, 255, 0.2);
+      outline: none;
+    }
+  </style>
+
+<script type="text/javascript" src="./KASClientCore.js"></script>
+<script type="text/javascript" src="./KASClientUI.js"></script>
+
+  <script>
+    // Type aliases (short names)
+    var KASFormResultVisibility = KASClient.KASFormResultVisibility;
+    var KASQuestionType = KASClient.KASQuestionType;
+    var KASFormPageNavigator = KASClient.UI.KASFormPageNavigator;
+    var KASFormPage = KASClient.UI.KASFormPage;
+    var KASFormEmptyModule = KASClient.KASFormEmptyModule;
+    var KASFormModule = KASClient.UI.KASFormModule;
+    var KASFormDetailsModule = KASClient.UI.KASFormDetailsModule;
+    var KASFormTitleSubtitleActionModule = KASClient.UI.KASFormTitleSubtitleActionModule;
+    var KASFormQuestionResponsesModule = KASClient.UI.KASFormQuestionResponsesModule;
+    var KASFormUserTitleSubtitleActionModule = KASClient.UI.KASFormUserTitleSubtitleActionModule;
+    var printf = KASClient.App.printf;
+
+    // Constants
+    var RESPONSE_TITLE_QUESTION_ID = 0;
+    var RESPONSE_TIMESTAMP_QUESTION_ID = -1; // Will be populated
+    var RESPONSE_TIMESTAMP_METADATA_NAME = "DateTime";
+    var RESPONSE_LOCATION_METADATA_NAME = "Location";
+
+    // Customized strings/values through manifest
+    var PACKAGE_ICON_PATH = "iconPath";
+    var PACKAGE_USER_STRINGS = "userStrings";
+    var PACKAGE_CUSTOMIZATION_VALUES = "customizationValues";
+    var SHOW_HTML_TOOLBAR = "ShowHtmlToolbar";
+    var SHOW_DETAIL_MODULE = "ShowDetailModule";
+    var SHOW_DETAIL_SENDER_SECTION = "ShowDetailSenderSection";
+    var SHOW_DETAIL_TITLE_SECTION = "ShowDetailTitleSection";
+    var SHOW_DETAIL_LIKES_AND_COMMENTS_SECTION = "ShowDetailLikesAndCommentsSection";
+    var SHOW_DETAIL_LIKES_SECTION = "ShowDetailLikesSection";
+    var SHOW_DETAIL_COMMENTS_SECTION = "ShowDetailCommentsSection";
+    var SHOW_MY_RESPONSE_MODULE = "ShowMyResponseModule";
+    var SHOW_INSIGHT_MODULE = "ShowInsightModule";
+    var SHOW_ALL_RESPONSE_MODULE = "ShowAllResponseModule";
+    var SHOW_SETTING_MODULE = "ShowSettingModule";
+    var SHOW_CLOSE_SETTING = "ShowCloseSetting";
+    var SHOW_SHARE_SETTING = "ShowShareSetting";
+    var SHOW_FORWARD_SETTING = "canForward";
+    var SHOW_EDIT_SETTING = "canEdit";
+
+    // Package settings
+    var IS_CUSTOM_CARD = "isCustomCard";
+    var IS_RESPONSE_CARD = "isResponseCard";
+    var SHOW_QUESTION_MODULE = "showQuestionModule";
+
+    // Globals
+    var _strings = null;
+    var _shouldShowDebugView = false;
+    var _form = null; // type: KASForm
+    var _permissions = null; // type: KASFormUserCapabilities
+    var _formVisibleQuestions; // type: Array<KASQuestion>
+    var _isFormActive; // type: boolean
+    var _myFormResponses; // type: Array<KASFormResponse>
+    var _shouldSeeSummary; // type: boolean
+    var _canRespond; // type: boolean
+    var _canSendReminder; // type: boolean
+    var _aggregatedSummary = null; // type: KASFormAggregatedSummary
+    var _flatSummary = null; // type: KASFormFlatSummary
+    var _processedSummary = null; // type: KASFormProcessedSummary
+    var _formReaction; // type: KASFormReaction
+    var _creatorInfo; // type: KASUser
+    var _respondedUserInfos; // type: Array<KASUser>
+    var _conversationName; // type: string
+    var _allResponses; // type: Dictionary<UserId: Array<<Dictionary<QuestionId: Answer>>>>
+    var _currentUserId; // type: string
+    var _pageNavigator = null; // type: KASFormPageNavigator
+    var _surveyURL = null; // type: string
+    var _userId = null;
+    var _userName = null;
+    var _packageProperties = null; // type: Dictionary
+    var _packageSettings = null; // type: Dictionary
+    var _conversationType = null; // type: Number
+    var _shouldShowResponseView = true; // type: Boolean
+
+    function onPageLoad() {
+      // Uncomment to test with mock data
+      // KASClient.enableMockData();
+
+      KASClient.App.recordEvent(KASClient.Constants.TELEMETRY_EVENT_IMMERSIVE_PAGE_LOAD,
+                                  KASClient.Constants.TELEMETRY_EVENT_TYPE_START);
+
+      // Global error handling
+      window.onerror = function (msg, url, line, col, error) {
+        // col & error are new to the HTML 5, so handling for them
+        var extra = (!col && col !== undefined) ? "" : "#column:" + col;
+        extra += (!error && error !== undefined) ? "" : "#error:" + error.stack;
+        var error = "Error:" + msg + "#url:" + url + "#line:" + line + extra;
+        KASClient.App.logError(error);
+      };
+
+      // Remove any existing pages, if any
+      if (_pageNavigator) {
+        _pageNavigator.popAllPages();
+        _pageNavigator = null;
+      }
+
+      KASClient.App.getLocalizedStringsAsync(function (strings, error) {
+        if (error != null) {
+          KASClient.App.recordEvent(KASClient.Constants.TELEMETRY_EVENT_IMMERSIVE_PAGE_LOAD,
+                                      KASClient.Constants.TELEMETRY_EVENT_TYPE_ERROR,
+                                      KASClient.getErrorPropsForTelemetry("@getLocalizedStringsAsync, error: " + error));
+          return;
+        }
+        _strings = strings;
+        document.title = _strings["SurveySummaryPageTitle"];
+        showProgressBar(_strings["PageLoadProgressTitle"]);
+        KASClient.Form.getFormAsync(function (form, error) {
+          if (error != null) {
+            KASClient.App.recordEvent(KASClient.Constants.TELEMETRY_EVENT_IMMERSIVE_PAGE_LOAD,
+                                        KASClient.Constants.TELEMETRY_EVENT_TYPE_ERROR,
+                                        KASClient.getErrorPropsForTelemetry("@getFormAsync, error: " + error));
+            handleError(error);
+            return;
+          }
+          _form = form;
+          KASClient.App.getPackageCustomSettingsAsync(function (settings, error) {
+            if (error != null) {
+              KASClient.App.recordEvent(KASClient.Constants.TELEMETRY_EVENT_IMMERSIVE_PAGE_LOAD,
+                                        KASClient.Constants.TELEMETRY_EVENT_TYPE_ERROR,
+                                        KASClient.getErrorPropsForTelemetry("@getPackageCustomSettingsAsync, error: " + error));
+              handleError(error);
+              return;
+            }
+            _packageSettings = settings;
+            populateVisibleQuestions();
+            populateResponseTimestampQuestionId();
+            KASClient.App.getCurrentUserIdAsync(function (userId, error) {
+              if (error != null) {
+                KASClient.App.recordEvent(KASClient.Constants.TELEMETRY_EVENT_IMMERSIVE_PAGE_LOAD,
+                                        KASClient.Constants.TELEMETRY_EVENT_TYPE_ERROR,
+                                        KASClient.getErrorPropsForTelemetry("@getCurrentUserIdAsync, error: " + error));
+                handleError(error);
+                return;
+              }
+              _currentUserId = userId;
+              KASClient.Form.getFormStatusAsync(function (isActive, error) {
+                if (error != null) {
+                  KASClient.App.recordEvent(KASClient.Constants.TELEMETRY_EVENT_IMMERSIVE_PAGE_LOAD,
+                                        KASClient.Constants.TELEMETRY_EVENT_TYPE_ERROR,
+                                        KASClient.getErrorPropsForTelemetry("@getFormStatusAsync, error: " + error));
+                  handleError(error);
+                  return;
+                }
+                _isFormActive = isActive;
+                KASClient.App.logToReport("Fetching my responses");
+                KASClient.Form.getMyFormResponsesAsync(function (responses, error) {
+                  KASClient.App.logToReport("My responses fetched with error: " + error);
+                  if (error != null) {
+                    KASClient.App.recordEvent(KASClient.Constants.TELEMETRY_EVENT_IMMERSIVE_PAGE_LOAD,
+                                        KASClient.Constants.TELEMETRY_EVENT_TYPE_ERROR,
+                                        KASClient.getErrorPropsForTelemetry("@getMyFormResponsesAsync, error: " + error));
+                    handleError(error);
+                    return;
+                  }
+                  _myFormResponses = responses;
+                  KASClient.Form.getFormUserCapabilitiesAsync(function (permissions, error) {
+                      _permissions = permissions;
+                      _canRespond = permissions.canRespond;
+                      _canSendReminder = permissions.canSendReminder;
+                      _shouldSeeSummary = _permissions.shouldSeeSummary;
+                      if (_shouldSeeSummary) { // If current user is allowed, then only fetch the summary
+                          KASClient.App.logToReport("Fetching aggregated summary");
+                          KASClient.Form.getAggregatedFormSummaryAsync(function (
+                              aggregatedSummary, error) {
+                              KASClient.App.logToReport(
+                                  "Aggregated summary fetched with error: " + error);
+                              if (error != null) {
+                                  KASClient.App.recordEvent(KASClient.Constants.TELEMETRY_EVENT_IMMERSIVE_PAGE_LOAD,
+                                      KASClient.Constants.TELEMETRY_EVENT_TYPE_ERROR,
+                                      KASClient.getErrorPropsForTelemetry("@getAggregatedFormSummaryAsync, error: " + error));
+                                  handleError(error);
+                                  return;
+                              }
+                              _aggregatedSummary = aggregatedSummary;
+                              onGetSummary();
+                          });
+                      } else { // Current user isn't allowed, continue with rest of the stuffs
+                          onGetSummary();
+                      }
+
+                  });
+                });
+              });
+            });
+          });
+        });
+      });
+    }
+
+    function onGetSummary() {
+      KASClient.Form.getFormReactionAsync(function (reaction, error) {
+        if (error != null) {
+          KASClient.App.recordEvent(KASClient.Constants.TELEMETRY_EVENT_IMMERSIVE_PAGE_LOAD,
+                                        KASClient.Constants.TELEMETRY_EVENT_TYPE_ERROR,
+                                        KASClient.getErrorPropsForTelemetry("@getFormReactionAsync, error: " + error));
+          handleError(error);
+          return;
+        }
+        _formReaction = reaction;
+        KASClient.App.getUsersDetailsAsync([_form.creatorId], function (users, error) {
+          if (error != null) {
+            KASClient.App.recordEvent(KASClient.Constants.TELEMETRY_EVENT_IMMERSIVE_PAGE_LOAD,
+                                        KASClient.Constants.TELEMETRY_EVENT_TYPE_ERROR,
+                                        KASClient.getErrorPropsForTelemetry("@getUsersDetailsAsync, error: " + error));
+            handleError(error);
+            return;
+          }
+          _creatorInfo = users[_form.creatorId];
+          KASClient.App.getConversationNameAsync(function (name, error) {
+            if (error != null) {
+              KASClient.App.recordEvent(KASClient.Constants.TELEMETRY_EVENT_IMMERSIVE_PAGE_LOAD,
+                                        KASClient.Constants.TELEMETRY_EVENT_TYPE_ERROR,
+                                        KASClient.getErrorPropsForTelemetry("@getConversationNameAsync, error: " + error));
+              handleError(error);
+              return;
+            }
+            _conversationName = name;
+            KASClient.App.getConversationTypeAsync(function (conversationType, error) {
+              if (error != null) {
+                KASClient.App.recordEvent(KASClient.Constants.TELEMETRY_EVENT_IMMERSIVE_PAGE_LOAD,
+                                        KASClient.Constants.TELEMETRY_EVENT_TYPE_ERROR,
+                                        KASClient.getErrorPropsForTelemetry("@getConversationTypeAsync, error: " + error));
+                handleError(error);
+                return;
+              }
+              _conversationType = conversationType;
+              KASClient.Internal.getMessagePropertiesAsync(function (properties, error) {
+                if (error == null) {
+                  _shouldShowDebugView = properties.hasOwnProperty("shouldShowDebugView");
+                }
+                KASClient.App.getPackagePropertiesAsync(function (properties, error) {
+                  if (error != null) {
+                    KASClient.App.recordEvent(KASClient.Constants.TELEMETRY_EVENT_IMMERSIVE_PAGE_LOAD,
+                                        KASClient.Constants.TELEMETRY_EVENT_TYPE_ERROR,
+                                        KASClient.getErrorPropsForTelemetry("@getPackagePropertiesAsync, error: " + error));
+                    handleError(error);
+                    return;
+                  }
+
+              KASClient.Version.getClientSupportedVersion(function (version) {
+              // Old android client will trow an error if the question is not responded for numeric answer.
+              // Becuase in android it tries to convert answer to numeric value and not reponded question will have 'null' as response
+              // Displaying app update screen to user, if KASClient sdk is older + platform is android + any dependent or optional question exist in survey.
+              if(KASClient.getPlatform() == KASClient.Platform.Android && parseInt(version) < 28 &&  hasDependentOrOptionalQuestion()){
+                _shouldShowResponseView = false;
+              }
+              else
+              {
+                _shouldShowResponseView = true;
+              }
+              });
+
+              _packageProperties = properties;
+              hideProgressBar();
+              showSummaryPage();
+            });
+            });
+            });
+          });
+        });
+      });
+    }
+
+    var _customizedValues = null;
+
+    function getCustomizedValue(property, defaultValue) {
+      if (_customizedValues == null) {
+        if (_packageProperties.hasOwnProperty(PACKAGE_CUSTOMIZATION_VALUES)) {
+          _customizedValues = JSON.parse(_packageProperties[PACKAGE_CUSTOMIZATION_VALUES]);
+        } else {
+          _customizedValues = {};
+        }
+      }
+      if (_customizedValues.hasOwnProperty(property)) {
+        return _customizedValues[property];
+      }
+      return defaultValue;
+    }
+
+    var _customizedStrings = null;
+
+    function getCustomizedString(customStringId, defaultStringId) {
+      if (_customizedStrings == null) {
+        if (_packageProperties.hasOwnProperty(PACKAGE_USER_STRINGS)) {
+          _customizedStrings = JSON.parse(_packageProperties[PACKAGE_USER_STRINGS]);
+        } else {
+          _customizedStrings = {};
+        }
+      }
+      if (_customizedStrings.hasOwnProperty(customStringId)) {
+        return _customizedStrings[customStringId];
+      }
+      return _strings[defaultStringId];
+    }
+
+    function getPackageSetting(setting, defaultValue) {
+      if (_packageSettings && _packageSettings.hasOwnProperty(setting)) {
+        return _packageSettings[setting];
+      }
+      return defaultValue;
+    }
+
+    function getDetailedSummary(callback) {
+      // If detailed summary is already fetched, return
+      if (_flatSummary && _processedSummary) {
+        callback();
+        return;
+      }
+      // Else fetch the detailed summary first
+      KASClient.App.logToReport("Fetching detailed summary ");
+      var summaryFetched = false;
+      KASClient.Form.getFormSummaryAsync(
+        // Data fetched from database
+        function (flatSummary, processedSummary, error) {
+          KASClient.App.logToReport("Detailed summary fetched from db with error: " + error);
+          if (error != null) {
+            KASClient.App.recordEvent(KASClient.Constants.TELEMETRY_EVENT_INSIGHTS_LOAD,
+                                        KASClient.Constants.TELEMETRY_EVENT_TYPE_ERROR,
+                                        KASClient.getErrorPropsForTelemetry("@getFormSummaryAsync, error: " + error));
+            handleError(error);
+            return;
+          }
+          _flatSummary = flatSummary;
+          _processedSummary = processedSummary;
+          _allResponses = _flatSummary.getAllResponses();
+          removeNullResponseDataFromAllResponses(_allResponses);
+        },
+        // Data fetched from server
+        function (flatSummary, processedSummary, error) {
+          KASClient.App.logToReport("Detailed summary fetched from server with error: " + error);
+          if (error != null) {
+            KASClient.App.recordEvent(KASClient.Constants.TELEMETRY_EVENT_INSIGHTS_LOAD,
+                                        KASClient.Constants.TELEMETRY_EVENT_TYPE_ERROR,
+                                        KASClient.getErrorPropsForTelemetry("@getDetailedSummary, error: " + error));
+
+            // Show error and unblock caller
+            KASClient.App.showNativeErrorMessage(_strings["ResponseFetchError"]);
+            callback();
+            return;
+          }
+          _flatSummary = flatSummary;
+          _processedSummary = processedSummary;
+          _allResponses = _flatSummary.getAllResponses();
+          removeNullResponseDataFromAllResponses(_allResponses);
+          updateAggregatedSummaryFromFlatSummary();
+          summaryFetched = true;
+
+          var summaryLogInfo = "";
+          if (_processedSummary) {
+            summaryLogInfo += "Processed Summary Details:  _processedSummary.totalResponseCount=" + _processedSummary.totalResponseCount + " _processedSummary.targetResponderCount=" + _processedSummary.targetResponderCount + " _nonRespondersInConversation.count=" + _processedSummary.nonRespondersInConversation.length + "; ";
+          } else {
+            summaryLogInfo += "_processedSummary is invalid; ";
+          }
+          if (_flatSummary) {
+            summaryLogInfo += "Flat Summary Details: _allResponses.count=" + Object.keys(_allResponses).length;
+          } else {
+            summaryLogInfo += "_flatSummary is invalid";
+          }
+          KASClient.App.logToReport(summaryLogInfo);
+
+          callback();
+        });
+
+      // Create a timeout of 5s, for cases when
+      // summary fetching takes longer time
+      setTimeout(function () {
+        // Timeout occurred, if summary is still not fetched
+        // let's unblock the caller with data fetched from db
+        if (!summaryFetched) {
+          callback();
+        }
+      }, 5000 /* Timeout of 5s */ );
+    }
+
+    function removeNullResponseDataFromAllResponses(_allResponses)
+    {
+      //type: Dictionary<UserId: Array<<Dictionary<QuestionId: Answer>>>>
+      for(var userIdKey in _allResponses){
+        var responseArray = _allResponses[userIdKey];
+        for(var i=0; i<responseArray.length;i++){
+          removeNullResponseDataFromSingleResponse(responseArray[i]);
+        }
+      }
+    }
+
+  function removeNullResponseDataFromSingleResponse(response){
+    for(var quesIdKey in response){
+      if(KASClient.isEmptyObject(response[quesIdKey]))
+      {
+        delete response[quesIdKey];
+      }
+      else if(response[quesIdKey] === "[]"){
+        delete response[quesIdKey];
+      }
+    }
+  }
+
+    function updateAggregatedSummaryFromFlatSummary() {
+      if (_flatSummary == null || _processedSummary == null) {
+        return;
+      }
+      _aggregatedSummary.totalResponseCount = _processedSummary.totalResponseCount;
+      _aggregatedSummary.totalParticipantsCount = (_flatSummary.getRespondedUserIds()).length;
+      _aggregatedSummary.targetResponderCount = _processedSummary.targetResponderCount;
+      refreshSummaryPage();
+    }
+
+    function populateVisibleQuestions() {
+      _formVisibleQuestions = [];
+      var minQuestionId;
+      if (isMultipleResponseAllowed()) {
+        minQuestionId = 1;
+      } else {
+        minQuestionId = 0;
+      }
+
+      for (var i = minQuestionId; i < _form.questions.length; i++) {
+        var question = _form.questions[i]; // type: KASQuestion
+        if (!question.isInvisible) {
+          _formVisibleQuestions.push(question);
+        }
+      }
+    }
+
+    function populateResponseTimestampQuestionId() {
+      for (var i = 0; i < _form.properties.length; i++) {
+        var property = _form.properties[i]; // type: KASFormProperty
+        if (property.name == RESPONSE_TIMESTAMP_METADATA_NAME) {
+          RESPONSE_TIMESTAMP_QUESTION_ID = property.value;
+          break;
+        }
+      }
+    }
+
+    function isMyselfCreator() {
+      return (_form.creatorId == _currentUserId);
+    }
+
+    function isMultipleResponseAllowed() {
+      return !getPackageSetting(IS_RESPONSE_CARD, false) && _form.isResponseAppended;
+    }
+
+    //////////////////////////////////////////
+    ////////////// ERROR SCREEN //////////////
+    //////////////////////////////////////////
+
+    function handleError(errorMsg) {
+      KASClient.App.logToReport(errorMsg);
+      hideProgressBar();
+      showErrorScreen();
+    }
+
+    function showErrorScreen() {
+      if (_pageNavigator == null) {
+        _pageNavigator = new KASFormPageNavigator();
+        var container = document.getElementById("pageNavigator");
+        KASClient.UI.addElement(_pageNavigator.getView(), container);
+      }
+
+      var errorPage = new KASFormPage();
+      if (_packageProperties.hasOwnProperty(PACKAGE_ICON_PATH)) {
+        errorPage.navigationBar.iconPath = _packageProperties[PACKAGE_ICON_PATH];
+      } else {
+        errorPage.navigationBar.iconPath = "SurveyIcon.png";
+      }
+      errorPage.navigationBar.title = getCustomizedString("LabelPageHeader", "SummaryNavTitle");
+      errorPage.moduleContainer.backgroundColor = "white";
+
+      var emptyModule = new KASFormEmptyModule();
+      emptyModule.title = _strings["ErrorTitle"];
+      emptyModule.subtitle = _strings["ErrorSubtitle"];
+      if (!_pageNavigator.containsPages()) {
+        emptyModule.actionTitle = _strings["ErrorActionTitle"];;
+        emptyModule.action = onPageLoad;
+      }
+
+      errorPage.moduleContainer.addModule(emptyModule);
+
+      _pageNavigator.pushPage(errorPage);
+    }
+
+
+    ////////////////////////////////////////////
+    ////////////// SUMMARY SCREEN //////////////
+    ////////////////////////////////////////////
+
+    var _summaryPage = null;
+    var _insightModule = null;
+    var _allResponsesModule = null;
+    var _settingsModule = null;
+
+    function showSummaryPage() {
+        if (_pageNavigator == null) {
+            _pageNavigator = new KASFormPageNavigator();
+            var container = document.getElementById("pageNavigator");
+            KASClient.UI.addElement(_pageNavigator.getView(), container);
+
+            if (!getCustomizedValue(SHOW_HTML_TOOLBAR, true)) {
+                KASFormPage.hideNavigationBar = true;
+            }
+        }
+
+        _summaryPage = new KASFormPage();
+
+        if (getCustomizedValue(SHOW_HTML_TOOLBAR, true)) {
+            if (_packageProperties.hasOwnProperty(PACKAGE_ICON_PATH)) {
+                _summaryPage.navigationBar.iconPath = _packageProperties[PACKAGE_ICON_PATH];
+            } else {
+                _summaryPage.navigationBar.iconPath = "SurveyIcon.png";
+            }
+            _summaryPage.navigationBar.title = getCustomizedString("LabelPageHeader", "SummaryNavTitle");
+            _summaryPage.navigationBar.titleAction = (_shouldShowDebugView ? showDebugScreen : null);
+        }
+
+        /////// Form details module ///////
+        if (getCustomizedValue(SHOW_DETAIL_MODULE, true)) {
+            var formDetailsModule = new KASFormDetailsModule();
+            // Form details sender section
+            var coverImage = getSurveyCoverImage();
+            if (coverImage) {
+                formDetailsModule.coverImagePath = coverImage;
+            }
+            if (getCustomizedValue(SHOW_DETAIL_SENDER_SECTION, true)) {
+                formDetailsModule.creator = _creatorInfo;
+                formDetailsModule.assignedToLabel = _strings["SentTo"];
+                formDetailsModule.assignees = _conversationName;
+            } else {
+                formDetailsModule.hideSenderSection = true;
+            }
+            // Form details title/subtitle section
+            if (getCustomizedValue(SHOW_DETAIL_TITLE_SECTION, true)) {
+                formDetailsModule.formTitle = _form.title;
+                formDetailsModule.formDescription = getSurveyDescription();
+                if (!getPackageSetting(IS_RESPONSE_CARD, false)) {
+                    if (_isFormActive) {
+                        formDetailsModule.formSubtitle = printf(getCustomizedString("LabelCloseInfo", "SURVEY_CLOSES_ON_X"),
+                            "<b>" + KASClient.getDateString(new Date(_form.expiry)) + "</b>");
+                    } else {
+                        formDetailsModule.formSubtitle = getCustomizedString("LabelActionExpired", "SurveyClosed");
+                    }
+                }
+                formDetailsModule.viewMoreText = _strings["ViewMoreText"];
+                formDetailsModule.viewLessText = _strings["ViewLessText"];
+            } else {
+                formDetailsModule.hideTitleSection = true;
+            }
+            // Form details likes/comments section
+            if (!getPackageSetting(IS_RESPONSE_CARD, false) && getCustomizedValue(SHOW_DETAIL_LIKES_AND_COMMENTS_SECTION,
+                    true)) {
+                // Likes section
+                if (getCustomizedValue(SHOW_DETAIL_LIKES_SECTION, true)) {
+                    formDetailsModule.likes = _formReaction.likesCount;
+                    formDetailsModule.didILike = _formReaction.didILike;
+                    formDetailsModule.showAllLikesAction = showAllLikes;
+                    formDetailsModule.likeAction = addLike;
+                    formDetailsModule.hideLikes = _formReaction.hideLikes;
+                    formDetailsModule.hideLikesDetails = _formReaction.hideLikesDetails;
+                } else {
+                    formDetailsModule.hideLikes = true;
+                }
+                // Comments section
+                if (getCustomizedValue(SHOW_DETAIL_COMMENTS_SECTION, true)) {
+                    formDetailsModule.comments = _formReaction.commentsCount;
+                    formDetailsModule.didIComment = _formReaction.didIComment;
+                    formDetailsModule.showAllCommentsAction = showAllComments;
+                    formDetailsModule.hideComments = _formReaction.hideComments;
+                } else {
+                    formDetailsModule.hideComments = true;
+                }
+
+                formDetailsModule.hideLikesAndCommentsSection = formDetailsModule.hideComments && formDetailsModule.hideLikes;
+            } else {
+                formDetailsModule.hideLikesAndCommentsSection = true;
+            }
+
+            _summaryPage.moduleContainer.addModuleWithFullWidth(formDetailsModule);
+            KASClient.App.recordEvent(KASClient.Constants.TELEMETRY_EVENT_IMMERSIVE_PAGE_LOAD,
+                KASClient.Constants.TELEMETRY_EVENT_TYPE_END);
+        }
+
+        /////// My responses module ///////
+        if (getCustomizedValue(SHOW_MY_RESPONSE_MODULE, true)) {
+            var myResponseModule = new KASFormTitleSubtitleActionModule();
+            myResponseModule.showLeftBar = true;
+            myResponseModule.header = _strings["MyResponses"];
+            myResponseModule.boldTitle = false;
+            myResponseModule.footerTopPadding = true;
+            var myResponseTitles = getMyResponseTitles();
+            if (myResponseTitles && myResponseTitles.length > 0) {
+                myResponseModule.titles = myResponseTitles;
+                myResponseModule.subtitles = getMyResponseTimestampStrings();
+                myResponseModule.rowAction = showMyResponse;
+            } else {
+                myResponseModule.titles = [getCustomizedString("LabelNotResponded", "NotResponded")];
+            }
+            // Footer title and action
+            if (!getPackageSetting(IS_RESPONSE_CARD, false) && _canRespond) {
+                if (myResponseTitles.length == 0) {
+                    myResponseModule.footer = getCustomizedString("LabelRespondNow", "RespondNow");
+                } else if (isMultipleResponseAllowed()) {
+                    myResponseModule.footer = getCustomizedString("LabelAddResponse", "AddNewResponse");
+                }
+                myResponseModule.footerAction = addResponse;
+            }
+
+            _summaryPage.moduleContainer.addModule(myResponseModule);
+        }
+
+        /////// Questions module ///////
+        if (!getPackageSetting(IS_RESPONSE_CARD, false) && getPackageSetting(SHOW_QUESTION_MODULE, true) &&
+            _shouldSeeSummary) {
+            var questionsModule = new KASFormTitleSubtitleActionModule();
+            questionsModule.header = getCustomizedString("LabelQuestions", "SurveyQuestions");
+            questionsModule.showIndex = true;
+            questionsModule.boldTitle = false;
+            questionsModule.titles = getQuestionTitles();
+            questionsModule.subtitles = getQuestionTypeNames();
+            questionsModule.rowAction = showQuestionDetails;
+
+            for (var i = 0; i < questionsModule.titles.length; i++) {
+                questionsModule.setAccessibilityAttribute(i, KASClient.UI.KASFormAccessibilityKey.Hidden, "false");
+                questionsModule.setAccessibilityAttribute(i, KASClient.UI.KASFormAccessibilityKey.Role, KASClient.UI.KASFormAccessibilityRole
+                    .Button);
+                questionsModule.setAccessibilityAttribute(i, KASClient.UI.KASFormAccessibilityKey.Label, printf(_strings[
+                    "QuestionHeaderText"], i + 1, questionsModule.titles[i] + ". " + questionsModule.subtitles[i]));
+            }
+
+            _summaryPage.moduleContainer.addModule(questionsModule);
+        }
+
+        /////// Insight module (unique respondents) ///////
+        if (!getPackageSetting(IS_RESPONSE_CARD, false) && getCustomizedValue(SHOW_INSIGHT_MODULE, true) &&
+            _shouldSeeSummary && isMultipleResponseAllowed() && isMyselfCreator()) {
+            var respondedCount = _aggregatedSummary.totalParticipantsCount;
+            var targetRespondersCount = _aggregatedSummary.targetResponderCount;
+            var nonRespondedCount = targetRespondersCount - respondedCount;
+
+            _insightModule = new KASFormTitleSubtitleActionModule();
+            _insightModule.header = _strings["Insights"];
+            _insightModule.titles = [getNoOfPeopleRespondedMessage(respondedCount)];
+            _insightModule.subtitles = [_strings["Responded"]];
+            _insightModule.rowActions = [(respondedCount ? showRespondents : null)];
+
+            _summaryPage.moduleContainer.addModule(_insightModule);
+        }
+
+        /////// All responses module ///////
+        if (!getPackageSetting(IS_RESPONSE_CARD, false) && getCustomizedValue(SHOW_ALL_RESPONSE_MODULE, true) &&
+            _shouldSeeSummary) {
+            if (isMultipleResponseAllowed()) {
+                _allResponsesModule = new KASFormTitleSubtitleActionModule();
+                _allResponsesModule.header = _strings["AllResponsesModuleHeader"];
+                _allResponsesModule.titles = [printf(_strings["X_Responses"], (_aggregatedSummary.totalResponseCount).toLocaleString())];
+                _allResponsesModule.subtitles = [printf(_strings["FROM_X_Respondents"], (_aggregatedSummary.totalParticipantsCount).toLocaleString())];
+                _allResponsesModule.rowAction = (_aggregatedSummary.totalResponseCount ? showAllResponses : null);
+
+                _summaryPage.moduleContainer.addModule(_allResponsesModule);
+            } else {
+                /////// Merged Insight & All responses module ///////
+                var respondedCount = _aggregatedSummary.totalParticipantsCount;
+                var targetRespondersCount = _aggregatedSummary.targetResponderCount;
+                var nonRespondedCount = targetRespondersCount - respondedCount;
+
+                _allResponsesModule = new KASFormTitleSubtitleActionModule();
+                _allResponsesModule.header = _strings["AllResponsesModuleHeader"];
+                _allResponsesModule.titles = [getNoOfPeopleRespondedMessage(respondedCount)];
+                _allResponsesModule.subtitles = [_strings["Responded"]];
+                _allResponsesModule.rowAction = (respondedCount ? showAllResponses : null);
+
+                _summaryPage.moduleContainer.addModule(_allResponsesModule);
+            }
+        }
+
+        /////// Settings module ///////
+
+        _settingsModule = new KASFormTitleSubtitleActionModule();
+        _settingsModule.header = _strings["Settings"];
+        _settingsModule.showChevron = false;
+
+        var titles = [];
+        var titleColors = [];
+        var subtitles = [];
+        var accessoryViews = [];
+        var actions = [];
+        var accessibilityLabels = [];
+
+        if (!getPackageSetting(IS_RESPONSE_CARD, false) && getCustomizedValue(SHOW_SETTING_MODULE, true) &&
+            _shouldSeeSummary) {
+
+            if (isMyselfCreator() && _isFormActive) {
+                if (getCustomizedValue(SHOW_CLOSE_SETTING, true)) {
+                    titles.push(getCustomizedString("LabelCloseAction", "CloseSurvey"));
+                    titleColors.push(RED_COLOR);
+                    subtitles.push(getExpiryUntilString(false));
+                    accessoryViews.push(null);
+                    actions.push(closeSurvey);
+                    accessibilityLabels.push(titles[titles.length - 1] + ". " + getExpiryUntilString(true) + ". ");
+                }
+                if (!getPackageSetting(IS_CUSTOM_CARD, false) && getPackageSetting(SHOW_EDIT_SETTING, true)) {
+                    titles.push(getCustomizedString("LabelEditAction", "SummaryEditSurveyTitle"));
+                    titleColors.push(BLUE_COLOR);
+                    subtitles.push(_strings["EditSurveySubTitle"]);
+                    accessoryViews.push(null);
+                    actions.push(editSurvey);
+                    accessibilityLabels.push(titles[titles.length - 1] + ". " + subtitles[subtitles.length - 1] + ". ");
+                }
+
+            }
+
+            if (getCustomizedValue(SHOW_SHARE_SETTING, true)) {
+                titles.push(getCustomizedString("LabelShareActionResults", "ShareSurveyResults"));
+                titleColors.push(BLUE_COLOR);
+                subtitles.push(_strings["TapToGetLink"]);
+                var loadingSpinner = KASClient.UI.getLoadingSpinner();
+                loadingSpinner.style.display = "none";
+                accessoryViews.push(loadingSpinner);
+                actions.push(shareResult);
+                accessibilityLabels.push(titles[titles.length - 1] + ". " + subtitles[subtitles.length - 1] + ". ");
+            }
+
+            if (getPackageSetting(SHOW_FORWARD_SETTING, true) && KASClient.getPlatform() != KASClient.Platform.WindowsPhone &&
+                KASClient.getPlatform() != KASClient.Platform.WindowsImmersiv) { // Windows Client does not support Forward Survey yet. So that setting is not included.
+                titles.push(getCustomizedString("LabelDuplicateAction", "DuplicateThisSurvey"));
+                titleColors.push(BLUE_COLOR);
+                subtitles.push(getCustomizedString("LabelDuplicateActionSubText", "CopyQuestionsAndCreateSurvey"));
+                accessoryViews.push(null);
+                actions.push(duplicateSurvey);
+                accessibilityLabels.push(titles[titles.length - 1] + ". " + subtitles[subtitles.length - 1] + ". ");
+            }
+
+        }
+
+        //now reminder setting and other settings are independent of one another e.g. where vis in sender only but asr is everyone or admin
+        if (_canSendReminder && _isFormActive) {
+            titles.push(_strings["RemindPeopleToRespond"]);
+            titleColors.push(BLUE_COLOR);
+            subtitles.push(_strings["TapToSendReminder"]);
+            accessoryViews.push(null);
+            actions.push(sendReminder);
+            accessibilityLabels.push(titles[titles.length - 1] + ". " + subtitles[subtitles.length - 1] + ". ");
+        }
+
+        if (titles.length > 0) {
+          _settingsModule.titles = titles;
+          _settingsModule.titleColors = titleColors;
+          _settingsModule.subtitles = subtitles;
+          _settingsModule.accessoryViews = accessoryViews;
+          _settingsModule.rowActions = actions;
+
+          for (var i = 0; i < _settingsModule.titles.length; i++) {
+              _settingsModule.setAccessibilityAttribute(i, KASClient.UI.KASFormAccessibilityKey.Hidden, "false");
+              _settingsModule.setAccessibilityAttribute(i, KASClient.UI.KASFormAccessibilityKey.Role, KASClient.UI.KASFormAccessibilityRole
+                  .Button);
+              _settingsModule.setAccessibilityAttribute(i, KASClient.UI.KASFormAccessibilityKey.Label, accessibilityLabels[
+                  i]);
+          }
+
+          _summaryPage.moduleContainer.addModule(_settingsModule);
+        }
+      _pageNavigator.pushPage(_summaryPage);
+    }
+
+    function refreshSummaryPage() {
+      if (_summaryPage == null) {
+        return;
+      }
+
+      /////// Insight module (unique respondents) ///////
+      if (_insightModule != null && _shouldSeeSummary && isMultipleResponseAllowed() && isMyselfCreator()) {
+        var respondedCount = _aggregatedSummary.totalParticipantsCount;
+        var targetRespondersCount = _aggregatedSummary.targetResponderCount;
+        var nonRespondedCount = targetRespondersCount - respondedCount;
+
+        _insightModule.titles = [getNoOfPeopleRespondedMessage(respondedCount)];
+        _insightModule.subtitles = [_strings["Responded"]];
+        _insightModule.rowActions = [(respondedCount ? showRespondents : null)];
+
+        _summaryPage.moduleContainer.refreshModule(_insightModule);
+      }
+
+      /////// All responses module ///////
+      if (_allResponsesModule != null && _shouldSeeSummary) {
+        if (isMultipleResponseAllowed()) {
+          _allResponsesModule.titles = [printf(_strings["X_Responses"], (_aggregatedSummary.totalResponseCount).toLocaleString())];
+          _allResponsesModule.subtitles = [printf(_strings["FROM_X_Respondents"], (_aggregatedSummary.totalParticipantsCount).toLocaleString())];
+          _allResponsesModule.rowActions = null;
+          _allResponsesModule.rowAction = (_aggregatedSummary.totalResponseCount ? showAllResponses : null);
+
+          _summaryPage.moduleContainer.refreshModule(_allResponsesModule);
+        } else {
+          /////// Merged Insight & All responses module ///////
+          var respondedCount = _aggregatedSummary.totalParticipantsCount;
+          var targetRespondersCount = _aggregatedSummary.targetResponderCount;
+          var nonRespondedCount = targetRespondersCount - respondedCount;
+
+          _allResponsesModule.titles = [getNoOfPeopleRespondedMessage(respondedCount)];
+          _allResponsesModule.subtitles = [_strings["Responded"]];
+          _allResponsesModule.rowActions = null;
+          _allResponsesModule.rowAction = (respondedCount ? showAllResponses : null);
+
+          _summaryPage.moduleContainer.refreshModule(_allResponsesModule);
+        }
+      }
+    }
+
+    /////// Question module stuffs ///////
+    function getQuestionTitles() {
+      var questionTitles = [];
+      for (var i = 0; i < _formVisibleQuestions.length; i++) {
+        questionTitles.push(_formVisibleQuestions[i].title);
+      }
+      return questionTitles;
+    }
+
+    function getQuestionTypeNames() {
+      var questionTypeNames = [];
+      for (var i = 0; i < _formVisibleQuestions.length; i++) {
+        questionTypeNames.push(getQuestionTypeNameFromType(_formVisibleQuestions[i].type, _formVisibleQuestions[i].displayType));
+      }
+      return questionTypeNames;
+    }
+
+    /////// My responses module stuff ///////
+    function getMyResponseTitles() {
+      var myResponseTitles = [];
+      if (_myFormResponses && _myFormResponses.length > 0) { // Current user has responded
+        if (isMultipleResponseAllowed()) { // Then we have a response title
+          for (var i = 0; i < _myFormResponses.length; i++) {
+            var myResponse = _myFormResponses[i]; // type: KASFormResponse
+            myResponseTitles.push(getResponseTitle(myResponse.questionToAnswerMap, i));
+          }
+        } else { // Else we need to show a special string (my response module)
+          myResponseTitles = [_strings["SingleResponseMyResponseTitle"]];
+        }
+      }
+      return myResponseTitles;
+    }
+
+    function getResponseTitle(questionToAnswerMap, i) {
+      var responseTitle = questionToAnswerMap[RESPONSE_TITLE_QUESTION_ID];
+      if (responseTitle.constructor === Array) {
+        responseTitle = responseTitle[i];
+      }
+      return responseTitle;
+    }
+
+    function getMyResponseTimestampStrings() {
+      var responseTimestampQuestionId = RESPONSE_TIMESTAMP_QUESTION_ID;
+      if (responseTimestampQuestionId == -1) {
+        return null;
+      }
+      var myResponseTimestamps = [];
+      for (var i = 0; i < _myFormResponses.length; i++) {
+        var myResponse = _myFormResponses[i]; // type: KASFormResponse
+        var responseTimestamp = myResponse.sendTime;
+        if (responseTimestamp) {
+          var date = new Date(parseInt(responseTimestamp));
+          myResponseTimestamps.push(KASClient.getDateString(date));
+        } else {
+          myResponseTimestamps.push(0);
+        }
+      }
+      return myResponseTimestamps;
+    }
+
+    /////// Form details module actions ///////
+    function addLike() {
+      KASClient.Form.likeForm();
+    }
+
+    function showAllComments() {
+      KASClient.Form.showAllReactions();
+    }
+
+    function showAllLikes() {
+      KASClient.Form.showAllReactions(false);
+    }
+
+    /////// Description ///////
+    function getSurveyDescription() {
+      var properties = _form.properties;
+      var description = "";
+      for (var i = 0; i < properties.length; i++) {
+        if (properties[i].name === "Description") {
+          description = properties[i].value;
+          break;
+        }
+      }
+      return description;
+    }
+
+    /////// CoverImage ///////
+    function getSurveyCoverImage() {
+      var properties = _form.properties;
+      var coverImage = null;
+      for (var i = 0; i < properties.length; i++) {
+        if (properties[i].name === "CoverImage") {
+          coverImage = properties[i].value;
+          break;
+        }
+      }
+      return coverImage;
+    }
+
+    /////// My responses module actions ///////
+    function showMyResponse(responseIndex) {
+      var response = _myFormResponses[responseIndex]; // type: KASFormResponse
+      _userId = _currentUserId;
+      showResponsePage(response.questionToAnswerMap, responseIndex);
+    }
+
+    function addResponse() {
+      KASClient.Form.respondToForm();
+    }
+
+    /////// Questions module actions ///////
+    function showQuestionDetails(questionIndex) {
+      if(!_shouldShowResponseView) {
+        KASClient.UI.showIncompatibleScreen();
+        return;
+      }
+      showQuestionResponsesPage(questionIndex);
+    }
+
+    /////// All responses module actions ///////
+    // Take a look at showAllResponses() action
+
+    /////// Insight module actions ///////
+    function getInsightChart(respondedCount, nonRespondedCount) {
+      var canvasAttributes = {};
+      canvasAttributes["flex"] = "none";
+      canvasAttributes["overflow"] = "hidden";
+
+      var canvasSize = 35;
+      var canvas = KASClient.UI.getCanvas(canvasSize, canvasSize, canvasAttributes);
+      KASClient.UI.drawPieChart([respondedCount, nonRespondedCount], [LIGHT_BLUE_COLOR, "white"],
+        LIGHT_BLUE_COLOR, canvas, canvasSize, canvasSize);
+      return canvas;
+    }
+
+    // Take a look at showRespondents() action
+
+    /////// Settings module stuffs ///////
+    function getExpiryUntilString(forAccessbility) {
+      return printf(_strings["ExpiresIn"], KASClient.getExpiryUntilString((new Date(_form.expiry)), forAccessbility));
+    }
+
+    function closeSurvey(i) {
+      KASClient.Form.closeForm();
+    }
+
+    function editSurvey(i) {
+      KASClient.Form.showEditFormPage();
+    }
+
+    var gettingLink = false;
+
+    function shareResult(i) {
+      if (gettingLink) {
+        return; // Already fetching link
+      }
+
+      if (_surveyURL) {
+        KASClient.Form.shareFormURL(_surveyURL);
+      } else {
+        _settingsModule.setTitleLabelForIndex(i, _strings["GettingLink"]);
+        _settingsModule.setSubtitleForIndex(i, "");
+        _settingsModule.accessoryViews[i].style.display = "block";
+        KASClient.App.readTalkBackMessage(_strings["GettingLink"]);
+        _settingsModule.setAccessibilityAttribute(i, KASClient.UI.KASFormAccessibilityKey.Label, _settingsModule.titles[
+          i]);
+
+        gettingLink = true;
+        KASClient.Form.getFormURLAsync(function (url, error) {
+          if (error != null) {
+            showError(error);
+            _settingsModule.setTitleLabelForIndex(i, getCustomizedString("LabelShareActionResults",
+              "ShareSurveyResults"));
+            _settingsModule.setSubtitleForIndex(i, _strings["TapToGetLink"]);
+            _settingsModule.accessoryViews[i].style.display = "none";
+            _settingsModule.setAccessibilityAttribute(i, KASClient.UI.KASFormAccessibilityKey.Label,
+              _settingsModule.titles[i] + ". " + _settingsModule.subtitles[i]);
+          } else {
+            _surveyURL = url;
+            _settingsModule.setTitleLabelForIndex(i, _strings["TapToShareLink"]);
+            _settingsModule.setSubtitleForIndex(i, "");
+            _settingsModule.accessoryViews[i].style.display = "none";
+            KASClient.App.readTalkBackMessage(_strings["TapToShareLink"]);
+            _settingsModule.setAccessibilityAttribute(i, KASClient.UI.KASFormAccessibilityKey.Label,
+              _settingsModule.titles[i] + ". " + _settingsModule.subtitles[i]);
+          }
+          gettingLink = false;
+        });
+      }
+    }
+
+    function sendReminder(i) {
+      KASClient.Form.sendRemindersToRespond();
+    }
+
+    function duplicateSurvey(i) {
+      KASClient.Form.copyFormAndForward();
+    }
+
+    function getNoOfPeopleRespondedMessage(respondedCount) {
+      var message = "";
+      if (respondedCount == 1) {
+        message = _strings["One_Person"];
+      } else {
+        message = printf(_strings["X_People"], respondedCount.toLocaleString());
+      }
+      return message;
+    }
+
+    ///////////////////////////////////////////////////////
+    ////////////// QUESTION RESPONSES SCREEN //////////////
+    ///////////////////////////////////////////////////////
+    /* SUMMARY > QUESTIONS MODULE > SELECT QUESTION */
+
+    var _currentQuestionId = -1;
+    var _questionResponsesPage = null;
+
+    function showQuestionResponsesPage(questionId) {
+      _currentQuestionId = questionId;
+
+      _questionResponsesPage = new KASFormPage();
+      _questionResponsesPage.navigationBar.title = _strings["Responses"];
+      _questionResponsesPage.navigationBar.subtitle = printf(_strings["QuestionResponsesNavTitle"], (_currentQuestionId +
+        1).toLocaleString(), (_formVisibleQuestions.length).toLocaleString());
+
+      /////// Button to navigate to previous question ///////
+      var previousButton, nextButton;
+      previousButton = KASClient.UI.getButton(_strings["PreviousButtonTitle"], function () {
+        if (_currentQuestionId <= 0) {
+          return;
+        }
+        _currentQuestionId = _currentQuestionId - 1;
+        loadCurrentQuestionDetails();
+        KASClient.UI.addCSS(previousButton, getNextPreviousButtonAttributes(false));
+        setNextPreviousButtonAccessibilityAttributes(previousButton, false);
+        KASClient.UI.addCSS(nextButton, getNextPreviousButtonAttributes(true));
+        setNextPreviousButtonAccessibilityAttributes(nextButton, true);
+        KASClient.Internal.screenChanged("");
+      }, getNextPreviousButtonAttributes(false));
+      setNextPreviousButtonAccessibilityAttributes(previousButton, false);
+
+      /////// Button to navigate to next question ///////
+      nextButton = KASClient.UI.getButton(_strings["NextButtonTitle"], function () {
+        if (_currentQuestionId >= _formVisibleQuestions.length - 1) {
+          return;
+        }
+        _currentQuestionId = _currentQuestionId + 1;
+        loadCurrentQuestionDetails();
+        KASClient.UI.addCSS(previousButton, getNextPreviousButtonAttributes(false));
+        setNextPreviousButtonAccessibilityAttributes(previousButton, false);
+        KASClient.UI.addCSS(nextButton, getNextPreviousButtonAttributes(true));
+        setNextPreviousButtonAccessibilityAttributes(nextButton, true);
+        KASClient.Internal.screenChanged("");
+      }, getNextPreviousButtonAttributes(true));
+      setNextPreviousButtonAccessibilityAttributes(nextButton, true);
+
+      /////// Bottom bar with these buttons ///////
+      _questionResponsesPage.bottomBar.elements = [previousButton, KASClient.UI.getFlexibleSpace(), nextButton];
+      _pageNavigator.pushPage(_questionResponsesPage);
+
+      // Fetch detailed summary before drilling to question responses
+      getDetailedSummary(function () {
+        loadCurrentQuestionDetails();
+      });
+    }
+
+    function getNextPreviousButtonAttributes(isNext) {
+      var attributes = {
+        "margin": "0 10pt 0 10pt"
+      };
+      var enabledColor = "rgb(0, 161, 255)";
+      var disabledColor = "rgba(114, 125, 136, 0.50)";
+
+      attributes["color"] = enabledColor;
+      if (isNext) {
+        if (_currentQuestionId >= _formVisibleQuestions.length - 1) {
+          attributes["color"] = disabledColor;
+        }
+      } else if (_currentQuestionId <= 0) {
+        attributes["color"] = disabledColor;
+      }
+      return attributes;
+    }
+
+    function setNextPreviousButtonAccessibilityAttributes(nextPrevButton, isNext) {
+      nextPrevButton.setAttribute("role", "button");
+      nextPrevButton.setAttribute("aria-disabled", "false");
+      if (isNext) {
+        if (_currentQuestionId >= _formVisibleQuestions.length - 1) {
+          nextPrevButton.setAttribute("aria-disabled", "true");
+        }
+      } else if (_currentQuestionId <= 0) {
+        nextPrevButton.setAttribute("aria-disabled", "true");
+      }
+    }
+
+    /////// Method to load the current question's details ///////
+    function loadCurrentQuestionDetails() {
+      _questionResponsesPage.moduleContainer.removeAllModules();
+
+      _questionResponsesPage.navigationBar.subtitle = printf(_strings["QuestionResponsesNavTitle"], (_currentQuestionId +
+        1).toLocaleString(), (_formVisibleQuestions.length).toLocaleString());
+      _questionResponsesPage.navigationBar.updateSubtitle();
+
+      var questionResponsesModule = new KASFormQuestionResponsesModule();
+      if(_processedSummary)
+      {
+        questionResponsesModule.responsesHeader = printf(_strings["QuestionResponsesTitle"], _processedSummary.totalResponseCount.toLocaleString());
+        questionResponsesModule.questionResult = _processedSummary.results[_formVisibleQuestions[_currentQuestionId].id];
+      }
+      questionResponsesModule.questionTitle = _formVisibleQuestions[_currentQuestionId].title;
+      questionResponsesModule.questionType = _formVisibleQuestions[_currentQuestionId].type;
+      questionResponsesModule.optionSelectedAction = optionSelected;
+      questionResponsesModule.sumTitle = _strings["SumTitle"];
+      questionResponsesModule.averageTitle = _strings["AverageTitle"];
+      questionResponsesModule.aggregationNotApplicableTitle = _strings["AggregationNotSupported"];
+
+      if (_formVisibleQuestions[_currentQuestionId].type == KASQuestionType.AttachmentList &&
+          _formVisibleQuestions[_currentQuestionId].config.attachmentListType == KASClient.AttachmentListResponseType.LIST_OF_IMAGES) {
+        var userIds = _flatSummary.getRespondedUserIds();
+
+        KASClient.App.getUsersDetailsAsync(userIds, function (usersJSON, error) {
+          if (error != null) {
+            handleError(error);
+            return;
+          }
+          /*
+           * Image only list type of response will be presented in a aggregated fashion with a
+           * carousel view for every response recorded by the respondents.
+           */
+          var imageResult = new KASClient.KASAttachmentListQuestionResult();
+          var questionId = _currentQuestionId;
+          for (var userIdIndex = 0; userIdIndex < userIds.length; userIdIndex++) {
+            var currentUserId = userIds[userIdIndex];
+            var imageResponsesArray = _flatSummary.getQuestionResponsesForUserId(currentUserId, isMultipleResponseAllowed() ? questionId + 1 : questionId);
+            var timeStampResponsesArray = _flatSummary.getQuestionResponsesForUserId(currentUserId, RESPONSE_TIMESTAMP_QUESTION_ID);
+
+            var responsesCount = imageResponsesArray.length;
+            for (var responseIndex = 0; responseIndex < responsesCount; responseIndex++) {
+              imageResult.userInfo.push(KASClient.KASUser.fromJSON(usersJSON[currentUserId]));
+              imageResult.timeStamps.push(KASClient.getDateString(new Date(parseInt(timeStampResponsesArray[responseIndex]))));
+              imageResult.attachmentsResponseJSONStrings.push(imageResponsesArray[responseIndex]);
+            }
+          }
+          imageResult.questionId = questionResponsesModule.questionTitle;
+          imageResult.attachmentListType = KASClient.AttachmentListResponseType.LIST_OF_IMAGES;
+          questionResponsesModule.questionResult = imageResult;
+          _questionResponsesPage.moduleContainer.addModuleWithFullWidth(questionResponsesModule);
+        });
+      } else {
+        questionResponsesModule.questionResult = _processedSummary.results[_formVisibleQuestions[_currentQuestionId].id];
+        _questionResponsesPage.moduleContainer.addModuleWithFullWidth(questionResponsesModule);
+      }
+    }
+
+    /////// Method to load option responders' page ///////
+    function optionSelected(optionId) {
+      showOptionRespondersPage(_currentQuestionId, optionId);
+    }
+
+    //////////////////////////////////////////////////////
+    ////////////// OPTION RESPONDERS SCREEN //////////////
+    //////////////////////////////////////////////////////
+    /* MULTI-CHOICE QUESTION RESPONSES SCREEN > SELECT OPTION */
+
+    function showOptionRespondersPage(questionId, optionId) {
+      var respondentsPage = new KASFormPage();
+
+      var optionTitle = _formVisibleQuestions[questionId].options[optionId].text;
+      respondentsPage.navigationBar.title = optionTitle;
+      respondentsPage.navigationBar.subtitle = _strings["Respondents"];
+
+      var originalQuestionId = _formVisibleQuestions[questionId].id;
+      var questionResult = _processedSummary.results[originalQuestionId]; // type: KASOptionQuestionResult
+      var optionResult = questionResult.optionResults[optionId]; // KASOptionResult
+      var respondedUserIds = Object.keys(optionResult.responderToResponseCount);
+
+      if (respondedUserIds.length > 0) {
+        var userModule = new KASFormUserTitleSubtitleActionModule();
+        KASClient.App.getUsersDetailsAsync(respondedUserIds, function (usersJson, error) {
+          if (error != null) {
+            handleError(error);
+            return;
+          }
+          _respondedUserInfos = Object.values(usersJson);
+
+          var userResponseCounts = Object.values(optionResult.responderToResponseCount);
+          var responseCountStrings = [];
+          for (var i = 0; i < userResponseCounts.length; i++) {
+            responseCountStrings.push(printf(_strings["X_Responses"], (userResponseCounts[i]).toLocaleString()));
+          }
+
+          var showUserResponseActions = [];
+          for (var userIndex = 0; userIndex < respondedUserIds.length; userIndex++) {
+            if (isMultipleResponseAllowed()) {
+              showUserResponseActions.push(showUserResponses.bind(userIndex));
+            } else {
+              var userId = respondedUserIds[userIndex];
+              showUserResponseActions.push(showOptionSelectorUserResponse.bind(userIndex));
+            }
+          }
+
+          userModule.users = _respondedUserInfos;
+          userModule.titles = responseCountStrings;
+          userModule.rowActions = showUserResponseActions;
+
+          respondentsPage.moduleContainer.addModuleWithFullWidth(userModule);
+          _pageNavigator.pushPage(respondentsPage);
+        });
+      } else {
+        _pageNavigator.pushPage(respondentsPage);
+      }
+    }
+
+    // This method is to show user response when ira=false
+    function showOptionSelectorUserResponse(userIndex) {
+      _userId = _respondedUserInfos[userIndex].id;
+      _userName = _respondedUserInfos[userIndex].name;
+
+      var userResponses = _flatSummary.getResponsesForUserId(_userId); // type: Dictionary<QuestionId: Array<Answer>>
+
+      var questionToAnswerMap = {};
+      for (var questionId in userResponses) {
+        questionToAnswerMap[questionId] = userResponses[questionId][0];
+      }
+
+      showResponsePage(questionToAnswerMap, 0);
+    }
+
+    //////////////////////////////////////////////////
+    ////////////// ALL RESPONSES SCREEN //////////////
+    //////////////////////////////////////////////////
+    /* SUMMARY > TAP ON ALL RESPONSES MODULE */
+
+    var _allResponsesPage = null;
+    var _allResponsesFlat = null;
+    var _allResponseUsers = null;
+
+    function hasDependentOrOptionalQuestion(){
+      var quesList = _form.questions;
+      var loopCounter=0;
+      for(;loopCounter<quesList.length;loopCounter++){
+        if(quesList[loopCounter].visif || quesList[loopCounter].isResponseOptional){
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function showAllResponses() {
+      if(!_shouldShowResponseView) {
+        KASClient.UI.showIncompatibleScreen();
+        return;
+      }
+
+      KASClient.App.recordEvent(KASClient.Constants.TELEMETRY_EVENT_ALL_RESPONSES_LOAD,
+                                        KASClient.Constants.TELEMETRY_EVENT_TYPE_START);
+      _allResponsesPage = new KASFormPage();
+      _allResponsesPage.navigationBar.title = _strings["AllResponses"];
+
+      //show bottom bar only if there are non-responders
+      if (_aggregatedSummary.targetResponderCount > _aggregatedSummary.totalParticipantsCount) {
+          _allResponsesPage.bottomBar.elements = [getNonRespondersDiv()];
+          _allResponsesPage.bottomBar.attributes = {"background-color": "transparent"};
+      }
+
+      setNavBarLoadingStyle(_allResponsesPage);
+      _pageNavigator.pushPage(_allResponsesPage);
+
+      // Fetch detailed summary before drilling to all responses
+      getDetailedSummary(function () {
+        setNavBarRetryStyle(_allResponsesPage, refreshAllResponses);
+        refreshAllResponses();
+      });
+    }
+
+    //bottom bar that shows the count of non responders
+    function getNonRespondersDiv() {
+
+        var nonRespondersDiv = KASClient.UI.getElement("div",{
+            "width": "100%",
+            "height": "100%",
+            "background-color": "#ffffff",
+            "border": "solid 1px #b7bdc2",
+            "display": "flex",
+            "display-direction": "row",
+            "justify-content": "space-between",
+            "align-items": "center"
+        });
+
+        nonRespondersDiv.onclick = function () {
+            showNonRespondentsPage();
+        };
+        var notRespondedDiv = KASClient.UI.getLabel( _strings["NotRespondedTitle"], {
+            "font-size": KASClient.UI.getScaledFontSize("16px"),
+            "text-align": "left",
+            "color": TEXT_PRIMARY_COLOR,
+            "padding-left": "15px",
+            "font-weight": REGULAR_FONT_WEIGHT
+        });
+        notRespondedDiv.innerText = _strings["NotRespondedTitle"];
+        KASClient.UI.addElement(notRespondedDiv, nonRespondersDiv);
+
+        var countAndDrillDownDiv = KASClient.UI.getElement("div", {
+            "display": "flex",
+            "direction": "row",
+            "padding-right": "16px"
+        });
+
+        // no count badge for forums as this feature is not supported for forums as the count is wrong in that case
+        if(_conversationType != KASClient.KASFormConversationType.FORUM && _conversationType != KASClient.KASFormConversationType.PUBLIC_GROUP) {
+            var countDiv = KASClient.UI.getElement("div", {
+                "border-radius": "12px",
+                "background-color": "#ff9f01",
+                "text-align": "center",
+                "min-width": "30px",
+                "margin-right": "9px"
+            });
+            var countLabel = KASClient.UI.getLabel((_aggregatedSummary.targetResponderCount - _aggregatedSummary.totalParticipantsCount).toLocaleString(), {
+                "font-size": KASClient.UI.getScaledFontSize("16px"),
+                "font-weight": "600",
+                "color": "#ffffff",
+                "padding-left": "5px",
+                "padding-right": "5px",
+                "padding-top": "2px",
+                "padding-bottom": "2px"
+            });
+
+            KASClient.UI.addElement(countLabel, countDiv);
+            KASClient.UI.addElement(countDiv, countAndDrillDownDiv);
+            KASClient.UI.setAccessibilityBasic(nonRespondersDiv, false, KASClient.UI.KASFormAccessibilityRole.Button, (_aggregatedSummary.targetResponderCount - _aggregatedSummary.totalParticipantsCount).toLocaleString() + _strings["NotRespondedTitle"]);
+        }
+
+        var chevronIcon = KASClient.UI.getChevronIcon({"align-self": "center"});
+        KASClient.UI.addElement(chevronIcon, countAndDrillDownDiv);
+        KASClient.UI.setAccessibilityBasic(chevronIcon, false, KASClient.UI.KASFormAccessibilityRole.Button, KASClient.Internal.getKASClientString("KASFormPageShowDetail"));
+
+        KASClient.UI.addElement(countAndDrillDownDiv, nonRespondersDiv);
+
+        return nonRespondersDiv;
+    }
+
+    //page that shows list of non responders (or a just a message in case of heirarchical groups)
+    function showNonRespondentsPage(){
+
+        var nonRespondentsPage = new KASFormPage();
+        nonRespondentsPage.navigationBar.title = _strings["NotRespondedTitle"];
+
+        // feature not available message in forums
+        if(_conversationType == KASClient.KASFormConversationType.FORUM || _conversationType == KASClient.KASFormConversationType.PUBLIC_GROUP ){
+            var emptyModule = new KASFormEmptyModule();
+            emptyModule.title = _strings["FeatureNotAvailableForForumMsg"];
+            nonRespondentsPage.moduleContainer.addModule(emptyModule);
+            _pageNavigator.pushPage(nonRespondentsPage);
+        } else {
+            //only creator can see the send reminder button, others can see the list of non responderes but not the send reminder button
+            if(_canSendReminder && _isFormActive) {
+                //TODO: add attributes to css @pankum
+                var sendReminderButton = KASClient.UI.getElement("input", {
+                    "width": "100%",
+                    "height": "48px",
+                    "outline": "none",
+                    "border": "none",
+                    "font-size": KASClient.UI.getScaledFontSize("16px"),
+                    "background-color": BLUE_COLOR,
+                    "-webkit-appearance" : "none",
+                    "color": "white"
+                });
+                sendReminderButton.value = _strings["SendReminder"];
+                sendReminderButton.type = "button";
+                sendReminderButton.onclick = function () {
+                    sendReminder();
+                };
+
+                nonRespondentsPage.bottomBar.elements = [sendReminderButton];
+                nonRespondentsPage.bottomBar.attributes = {
+                    "background-color": "rgba(255, 255, 255, 0.85)",
+                    "padding-left": "20px",
+                    "padding-right": "20px",
+                    "padding-bottom": "10px"
+                };
+            }
+
+            _pageNavigator.pushPage(nonRespondentsPage);
+            var nonResponderIds = _processedSummary.nonRespondersInConversation;
+            if (nonResponderIds  && nonResponderIds.length > 0) {
+                 KASClient.App.getUsersDetailsAsync(nonResponderIds, function (usersJson, error) {
+                    if (error != null) {
+                        handleError(error);
+                        return;
+                    }
+                    var nonRespondentUserInfos = Object.values(usersJson);
+                    var userModule = new KASFormUserTitleSubtitleActionModule();
+                    userModule.users = nonRespondentUserInfos;
+                    nonRespondentsPage.moduleContainer.addModuleWithFullWidth(userModule);
+                });
+            }
+        }
+    }
+
+    function refreshAllResponses() {
+      var respondedUserIds = _flatSummary.getRespondedUserIds();
+      _allResponsesFlat = [];
+      var allResponseUserIds = [];
+      var allResponseTitles = [];
+      var allResponseTimestamps = [];
+      for (var userId in _allResponses) {
+        var userResponses = _allResponses[userId]; // type: Array<QuestionId: Answer>
+        for (var i = 0; i < userResponses.length; i++) {
+          var userResponse = userResponses[i];
+          _allResponsesFlat.push(userResponse);
+          allResponseUserIds.push(userId);
+          if (isMultipleResponseAllowed()) { // Only in multi-esponse we have a response title
+            allResponseTitles.push(getResponseTitle(userResponse, i));
+          }
+          var timestampString = KASClient.getDateString(new Date(parseInt(userResponse[RESPONSE_TIMESTAMP_QUESTION_ID])));
+          allResponseTimestamps.push(timestampString);
+        }
+      }
+
+      if (respondedUserIds.length > 0) {
+        var userModule = new KASFormUserTitleSubtitleActionModule();
+        KASClient.App.getUsersDetailsAsync(respondedUserIds, function (usersJson, error) {
+          if (error != null) {
+            KASClient.App.recordEvent(KASClient.Constants.TELEMETRY_EVENT_ALL_RESPONSES_LOAD,
+                                        KASClient.Constants.TELEMETRY_EVENT_TYPE_ERROR,
+                                        KASClient.getErrorPropsForTelemetry("@getUsersDetailsAsync, error: " + error));
+            handleError(error);
+            return;
+          }
+
+          _allResponseUsers = []; // type: Array<KASUser>
+          for (var j = 0; j < allResponseUserIds.length; j++) {
+            var userId = allResponseUserIds[j];
+            _allResponseUsers.push(usersJson[userId]);
+          }
+
+          userModule.users = _allResponseUsers;
+          if (isMultipleResponseAllowed()) {
+            userModule.titles = allResponseTitles;
+            userModule.subtitles = allResponseTimestamps;
+          } else {
+            userModule.titles = allResponseTimestamps;
+          }
+          userModule.rowAction = showResponseFromAllResponses;
+
+          _allResponsesPage.moduleContainer.removeAllModules();
+          _allResponsesPage.moduleContainer.addModuleWithFullWidth(userModule);
+          KASClient.App.recordEvent(KASClient.Constants.TELEMETRY_EVENT_ALL_RESPONSES_LOAD,
+                                        KASClient.Constants.TELEMETRY_EVENT_TYPE_END);
+        });
+      } else {
+        KASClient.App.recordEvent(KASClient.Constants.TELEMETRY_EVENT_ALL_RESPONSES_LOAD,
+                                        KASClient.Constants.TELEMETRY_EVENT_TYPE_ERROR,
+                                        KASClient.getErrorPropsForTelemetry("@refreshAllResponses, error: " + error));
+      }
+    }
+
+    function showResponseFromAllResponses(responseIndex) {
+      var user = _allResponseUsers[responseIndex]; // type: KASUser
+      _userId = user.id;
+      _userName = user.name;
+      showResponsePage(_allResponsesFlat[responseIndex], responseIndex);
+    }
+
+    ///////////////////////////////////////////////////////////
+    ////////////// RESPONDENTS SCREEN (INSIGHTS) //////////////
+    ///////////////////////////////////////////////////////////
+    /* SUMMARY > TAP ON INSIGHTS MODULE */
+
+    var _respondentsPage = null;
+
+    function showRespondents() {
+
+      if(!_shouldShowResponseView) {
+        KASClient.UI.showIncompatibleScreen();
+        return;
+      }
+
+      KASClient.App.recordEvent(KASClient.Constants.TELEMETRY_EVENT_INSIGHTS_LOAD,
+                                        KASClient.Constants.TELEMETRY_EVENT_TYPE_START);
+      _respondentsPage = new KASFormPage();
+      _respondentsPage.navigationBar.title = _strings["Respondents"];
+      setNavBarLoadingStyle(_respondentsPage);
+      _pageNavigator.pushPage(_respondentsPage);
+
+      // Fetch detailed summary before drilling to insight
+      getDetailedSummary(function () {
+        setNavBarRetryStyle(_respondentsPage, refreshRespondents);
+        refreshRespondents();
+      });
+    }
+
+    function refreshRespondents() {
+      var respondedUserIds = _flatSummary.getRespondedUserIds();
+      if (respondedUserIds.length > 0) {
+        var userModule = new KASFormUserTitleSubtitleActionModule();
+        KASClient.App.getUsersDetailsAsync(respondedUserIds, function (usersJson, error) {
+          if (error != null) {
+            KASClient.App.recordEvent(KASClient.Constants.TELEMETRY_EVENT_INSIGHTS_LOAD,
+                                        KASClient.Constants.TELEMETRY_EVENT_TYPE_ERROR,
+                                        KASClient.getErrorPropsForTelemetry("@refreshRespondents, error: " + error));
+            handleError(error);
+            return;
+          }
+          _respondedUserInfos = Object.values(usersJson);
+
+          var responseCountStrings = [];
+          for (var userId in usersJson) {
+            var userResponses = _flatSummary.getQuestionResponsesForUserId(userId, 0);
+            responseCountStrings.push(printf(_strings["X_Responses"], (userResponses.length).toLocaleString()));
+          }
+
+          userModule.users = _respondedUserInfos;
+          userModule.titles = responseCountStrings;
+          userModule.rowAction = showUserResponses;
+
+          _respondentsPage.moduleContainer.removeAllModules();
+          _respondentsPage.moduleContainer.addModuleWithFullWidth(userModule);
+          KASClient.App.recordEvent(KASClient.Constants.TELEMETRY_EVENT_INSIGHTS_LOAD,
+                                        KASClient.Constants.TELEMETRY_EVENT_TYPE_END);
+        });
+      } else {
+        KASClient.App.recordEvent(KASClient.Constants.TELEMETRY_EVENT_INSIGHTS_LOAD,
+                                        KASClient.Constants.TELEMETRY_EVENT_TYPE_ERROR,
+                                        KASClient.getErrorPropsForTelemetry("@refreshRespondents, respondedUserIds len is 0"));
+      }
+    }
+
+    /* Page navigation bar loading/retry style  */
+
+    function setNavBarLoadingStyle(page) {
+      var loadingSpinner = KASClient.UI.getLoadingSpinner({
+        "width": "16pt",
+        "width": "16pt",
+        "flex": "none"
+      });
+
+      page.navigationBar.subtitle = _strings["FetchingDetailedSummary"];
+      page.navigationBar.rightButtonTitle = loadingSpinner.outerHTML;
+      page.navigationBar.rightButtonAction = null;
+      page.updateNavigationBar();
+    }
+
+    function setNavBarRetryStyle(page, retryHandler) {
+      var retryButton = KASClient.UI.getImage("refresh.png", {
+        "width": "16pt",
+        "width": "16pt",
+        "flex": "none"
+      });
+      KASClient.UI.setAccessibilityAttribute(retryButton, KASClient.UI.KASFormAccessibilityKey.Label, _strings["RefreshResponsesButtonTitle"]);
+
+      page.navigationBar.subtitle = null;
+      page.navigationBar.rightButtonTitle = retryButton.outerHTML;
+      page.navigationBar.rightButtonAction = function () {
+        setNavBarLoadingStyle(page);
+        // Clear out existing summary, so that they will be fetched once again!
+        _flatSummary = _processedSummary = null;
+        getDetailedSummary(function () {
+          setNavBarRetryStyle(page, retryHandler);
+          if (retryHandler) {
+            retryHandler();
+          }
+        });
+      };
+      page.updateNavigationBar();
+    }
+
+    ///////////////////////////////////////////////////
+    ////////////// USER RESPONSES SCREEN //////////////
+    ///////////////////////////////////////////////////
+    /* SUMMARY > INSIGHTS MODULE > SELECT A RESPONDENT */
+
+    function showUserResponses(userIndex) {
+      var user = _respondedUserInfos[userIndex];
+      var userResponses = _flatSummary.getResponsesForUserId(user.id); // type: Dictionary<QuestionId: Array<Answer>>
+
+      _userId = user.id;
+      _userName = user.name;
+
+      var userResponsesPage = new KASFormPage();
+      if (user.id == _currentUserId) {
+        userResponsesPage.navigationBar.title = _strings["CurrentUserResponsesNavTitle"];
+      } else {
+        userResponsesPage.navigationBar.title = printf(_strings["UserResponsesNavTitle"], (user.name.trim().split(" "))[
+          0]);
+      }
+
+      var responseTitles = [];
+      for (var i = 0; i < userResponses[0].length; i++) {
+        var responseTitle = getResponseTitle(userResponses, i);
+        responseTitles.push(responseTitle);
+      }
+
+      var responseTimestampQuestionId = RESPONSE_TIMESTAMP_QUESTION_ID;
+      var responseTimestamps = [];
+      for (var i = 0; i < userResponses[responseTimestampQuestionId].length; i++) {
+        var responseTimestamp = userResponses[responseTimestampQuestionId][i];
+        responseTimestamps.push(KASClient.getDateString(new Date(parseInt(responseTimestamp))));
+      }
+
+      var userResponsesModule = new KASFormTitleSubtitleActionModule();
+      userResponsesModule.boldTitle = false;
+      userResponsesModule.titles = responseTitles;
+      userResponsesModule.subtitles = responseTimestamps;
+      userResponsesModule.rowAction = showUserResponse;
+
+      userResponsesPage.moduleContainer.addModuleWithFullWidth(userResponsesModule);
+
+      _pageNavigator.pushPage(userResponsesPage);
+    }
+
+    /////// Method to show one response by a user ///////
+    function showUserResponse(responseIndex) {
+      var userResponses = _flatSummary.getResponsesForUserId(_userId); // type: Dictionary<QuestionId: Array<Answer>>
+      var questionToAnswerMap = {};
+      for (var questionId in userResponses) {
+        questionToAnswerMap[questionId] = userResponses[questionId][responseIndex];
+      }
+
+      showResponsePage(questionToAnswerMap, responseIndex);
+    }
+
+    /////////////////////////////////////////////////////
+    ////////////// RESPONSE/ANSWERS SCREEN //////////////
+    /////////////////////////////////////////////////////
+    /* SUMMARY > MY RESPONSES MODULE > SELECT A RESPONSE */
+    /* SUMMARY > ALL RESPONSES MODULE > SELECT A RESPONSE */
+    /* SUMMARY > INSIGHT MODULE > SELECT A RESPONDENT > SELECT A RESPONSE */
+
+    function showResponsePage(questionToAnswerMap, responseIndex) { // type: Dictionary<QuestionId: Answer>
+      var responsePage = new KASFormPage();
+      removeNullResponseDataFromSingleResponse(questionToAnswerMap); // remove question with null data(not repondent) answer from reposes
+      if (isMultipleResponseAllowed()) { // Then we have a response title
+        responsePage.navigationBar.title = getResponseTitle(questionToAnswerMap, responseIndex);
+      }
+      // Else we don't have a response title
+      else if (_userId == _currentUserId) {
+        responsePage.navigationBar.title = _strings["CurrentUserSingleResponseNavTitle"];
+      } else {
+        responsePage.navigationBar.title = printf(_strings["SingleResponseNavTitle"], (_userName.trim().split(" "))[0]);
+      }
+
+      var questionTitles = [];
+      var answers = [];
+
+      var cssToOverride = {};
+      var counter=0;
+      for (var i = 0; i < _formVisibleQuestions.length; i++) {
+        var question = _formVisibleQuestions[i]; // type: KASQuestion
+
+        //hidden question due to dependency
+        if(!getQuestionVisibility(question, questionToAnswerMap))
+          continue;
+
+        questionTitles.push(getQuestionTitleForDisplay(question));
+        // isOptional
+        if (!questionToAnswerMap.hasOwnProperty(question.id) && question.isResponseOptional) {
+          if (!cssToOverride.hasOwnProperty("subtitles"))
+            cssToOverride["subtitles"] = {};
+          cssToOverride["subtitles"][counter.toString()] = {"font-style": "italic", "color": "#98a3af"};
+        }
+        counter++;
+        removeNullResponseDataFromSingleResponse(questionToAnswerMap);
+        answers.push(getQuestionResponse(questionToAnswerMap, question.id));
+      }
+
+      var questionAnswerModule = new KASFormTitleSubtitleActionModule();
+      questionAnswerModule.showIndex = true;
+      questionAnswerModule.subtitlePrimary = true;
+      questionAnswerModule.titles = questionTitles;
+      questionAnswerModule.subtitles = answers;
+      questionAnswerModule.plainTextSubtitle = false;
+      questionAnswerModule.cssToOverride = cssToOverride;
+
+      responsePage.moduleContainer.addModuleWithFullWidth(questionAnswerModule);
+      _pageNavigator.pushPage(responsePage);
+    }
+
+    function getQuestionVisibility(question, responses) {
+        if (!question.visif || !question.visif.rule || Object.keys(question.visif.rule).length == 0)
+            return true;
+
+        var responseObj = JSON.parse("{}");
+        responseObj.question = responses;
+        var visibility = KASClient.isDataValidAgainstRule(question.visif.rule, responseObj);
+        return visibility;
+    }
+
+    function getQuestionResponse(questionToAnswerMap, questionId) {
+      if(!questionToAnswerMap.hasOwnProperty(questionId))
+        return _strings["NotRespondedTitle"];
+
+      if (questionToAnswerMap[questionId] === "")
+        return "";
+
+        var questionType = _form.questions[questionId].type; // type: KASQuestionType
+      if (questionType == KASQuestionType.SingleSelect ||
+        questionType == KASQuestionType.SingleSelectExternal) {
+        var optionId = questionToAnswerMap[questionId];
+        if (optionId < 0) {
+            return "null";
+        }
+        return _form.questions[questionId].options[optionId].text;
+      } else if (questionType == KASQuestionType.MultiSelect) {
+        var options = "";
+        var optionIds = JSON.parse(questionToAnswerMap[questionId]);
+        for (var i = 0; i < optionIds.length; i++) {
+          var optionId = optionIds[i];
+          if (options == "") {
+            options = _form.questions[questionId].options[optionId].text;
+          } else {
+            options += ", " + _form.questions[questionId].options[optionId].text;
+          }
+        }
+        return options;
+      } else if (questionType == KASQuestionType.PhoneNumber) {
+        var contactInfoJSON = JSON.parse(questionToAnswerMap[questionId]);
+        var phoneNumberResponse = KASClient.KASPhoneNumber.fromJSON(contactInfoJSON);
+        return phoneNumberResponse.toString();
+      } else if (questionType == KASQuestionType.DateOnly){
+        return KASClient.getLocalizedDateOnlyString(questionToAnswerMap[questionId]);
+      } else if (questionType == KASQuestionType.Image) {
+        var imagePath = questionToAnswerMap[questionId];
+        if (!KASClient.isURL(imagePath)) {
+          // imagePath is a local path of the form /private/...
+          imagePath = "file://" + imagePath;
+        }
+        return imagePath;
+      } else {
+        return questionToAnswerMap[questionId];
+      }
+    }
+
+    //////////////////////////////////////////
+    ////////////// DEBUG SCREEN //////////////
+    //////////////////////////////////////////
+
+    function showDebugScreen() {
+      var debugPage = new KASFormPage();
+      debugPage.navigationBar.title = "Debug View";
+      debugPage.moduleContainer.backgroundColor = "white";
+
+      var titleAttributes = {};
+      titleAttributes["padding-top"] = "10pt";
+      titleAttributes["font-size"] = "15pt";
+      titleAttributes["font-weight"] = SEMIBOLD_FONT_WEIGHT;
+      titleAttributes["color"] = TEXT_PRIMARY_COLOR;
+
+      var jsonAttributes = {};
+      jsonAttributes["overflow-wrap"] = "break-word";
+      jsonAttributes["word-wrap"] = "break-word";
+      jsonAttributes["word-break"] = "break-word";
+
+      var views = [];
+
+      if (_form && _form.json) {
+        var formTitle = KASClient.UI.getLabel("FORM:", titleAttributes);
+        views.push(formTitle);
+        var form = KASClient.UI.getPrettyPrintDiv(jsonAttributes);
+        form.innerHTML = KASClient.syntaxHighlightJson(_form.json);
+        views.push(form);
+      }
+
+      if (_aggregatedSummary && _aggregatedSummary.json) {
+        var aggregatedSummaryTitle = KASClient.UI.getLabel("AGGREGATED SUMMARY:", titleAttributes);
+        views.push(aggregatedSummaryTitle);
+        var aggregatedSummary = KASClient.UI.getPrettyPrintDiv(jsonAttributes);
+        aggregatedSummary.innerHTML = KASClient.syntaxHighlightJson(_aggregatedSummary.json);
+        views.push(aggregatedSummary);
+      }
+
+      if (_flatSummary && _flatSummary.json) {
+        var flatSummaryTitle = KASClient.UI.getLabel("FLAT SUMMARY:", titleAttributes);
+        views.push(flatSummaryTitle);
+        var flatSummary = KASClient.UI.getPrettyPrintDiv(jsonAttributes);
+        flatSummary.innerHTML = KASClient.syntaxHighlightJson(_flatSummary.json);
+        views.push(flatSummary);
+      }
+
+      if (_processedSummary && _processedSummary.json) {
+        var processedSummaryTitle = KASClient.UI.getLabel("PROCESSED SUMMARY:", titleAttributes);
+        views.push(processedSummaryTitle);
+        var processedSummary = KASClient.UI.getPrettyPrintDiv(jsonAttributes);
+        processedSummary.innerHTML = KASClient.syntaxHighlightJson(_processedSummary.json);
+        views.push(processedSummary);
+      }
+
+      var debugView = KASClient.UI.getVerticalDiv(views);
+
+      debugPage.moduleContainer.addView(debugView);
+
+      _pageNavigator.pushPage(debugPage);
+    }
+
+    ///////////// Utility sections /////////////
+
+    function getQuestionTypeNameFromType(type, displayType) { // type: KASQuestionType, displayType: KASQuestionDisplayType
+      switch (type) {
+        case KASQuestionType.SingleSelect:
+          {
+            switch (displayType) {
+              case KASClient.KASQuestionDisplayType.DropDown:
+                return _strings["Drop Down"];
+              default:
+                return _strings["MultipleChoice"];
+            }
+          }
+        case KASQuestionType.MultiSelect:
+        case KASQuestionType.SingleSelectExternal:
+          return _strings["MultipleChoice"];
+        case KASQuestionType.Text:
+          return _strings["TextInput"];
+        case KASQuestionType.Numeric:
+          return _strings["NumberInput"];
+        case KASQuestionType.Image:
+        case KASQuestionType.AttachmentList:
+          return _strings["ImageAttachment"];
+        case KASQuestionType.PhoneNumber:
+          return _strings["Phone Number"];
+        case KASQuestionType.DateOnly:
+          return _strings["Date"];
+        case KASQuestionType.Location:
+        case KASQuestionType.DateTime:
+        default:
+          return "";
+      }
+    }
+
+    function getQuestionTitleForDisplay(question) {
+            var title = question.title;
+
+            if (question.isResponseOptional) {
+                title += " - (" + _strings["Optional"] + ")";
+            }
+
+            return title;
+    }
+
+    function showError(errorMsg) {
+      hideProgressBar();
+      KASClient.App.showNativeErrorMessage(errorMsg);
+    }
+
+    function showProgressBar(text) {
+      KASClient.App.showProgressBar(text);
+    }
+
+    function hideProgressBar() {
+      KASClient.App.hideProgressBar();
+    }
+  </script>
+</head>
+
+<body onload="onPageLoad()">
+  <div id="pageNavigator">
+  </div>
+  <!-- <div>
+    <input type="submit" value="RELOAD" style="position:fixed;bottom:0;height:44;" onclick="onPageLoad()">
+  </div> -->
+</body>
+
+</html>

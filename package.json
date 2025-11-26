@@ -1,0 +1,57 @@
+{
+  "id": "e6726605-07f4-49f0-8d18-1678d556c8ff",
+  "schemaVersion": 1,
+  "displayName": "Aperturas y Cierres",
+  "providerName": "FEMSA Comercio",
+  "description": "En esta Aplicacion, se cargan evidencias de Apertura y cierre de tienda",
+  "icon": "SurveyIcon.png",
+  "version": "6",
+  "minorVersion": "1",
+  "appModel": "CardData.json",
+  "parentTemplateId": "form",
+  "dials": {
+    "isLocalised": true
+  },
+  "actionScope": "Group",
+  "views": {
+    "ChatCanvasCardView": {
+      "showResponseCount": false,
+      "showExpiry": false,
+      "showHeader": true,
+      "showFooter": true,
+      "showLikes": false,
+      "showComments": false,
+      "showReceipts": false,
+      "isResponseEditable": false,
+      "labelResponseSending": "Sending response",
+      "labelResponseFailed": "Response could not be sent",
+      "labelResponded": "You responded"
+    },
+    "CreationView": {
+      "sourceLocation": "SurveyResponse.html",
+      "showNativeToolbar": false,
+      "backDialogVisibility": true,
+      "labelHeader": "Respuesta de la acción"
+    },
+    "ResponseView": {
+      "labelHeader": "Respuesta de la acción",
+      "sourceLocation": "SurveyResponse.html"
+    },
+    "ResponseResultsView": {
+      "sourceLocation": "SurveySummary.html",
+      "showNativeToolbar": false,
+      "labelPageHeader": "Aperturas y Cierres",
+      "labelCloseInfo": "LabelCloseInfoPlaceHolder {0}",
+      "labelActionExpired": "LabelActionExpiredPlaceHolder",
+      "labelNotResponded": "LabelNotRespondedPlaceHolder",
+      "labelRespondNow": "LabelRespondNowPlaceHolder",
+      "labelAddResponse": "LabelAddResponsePlaceHolder",
+      "labelQuestions": "LabelQuestionsPlaceHolder",
+      "labelCloseAction": "LabelCloseActionPlaceHolder",
+      "labelShareActionResults": "LabelShareActionResultsPlaceHolder",
+      "labelDuplicateAction": "LabelDuplicateActionPlaceHolder",
+      "labelDuplicateActionSubText": "LabelDuplicateActionSubTextPlaceHolder",
+      "labelCloseActionConfirmation": "LabelCloseActionConfirmationPlaceHolder"
+    }
+  }
+}
